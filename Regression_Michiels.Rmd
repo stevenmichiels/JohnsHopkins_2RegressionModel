@@ -1,0 +1,253 @@
+---
+title: 'Peer-graded Assignment: Regression models'
+author: "Steven Michiels"
+date: "4/20/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+#  Executive summary
+Questions to be answered: 1) “Is an automatic or manual transmission better for MPG” and 2) "Quantify the MPG difference between automatic and manual transmissions". 
+
+A two-sided t-test showed that the mpg for manual tranmission is signicantly (p=0.001) higher than for automatic transmission. A linear model with the transmission type (am) as only predictor, however, showed that the transmission type only explains roughly 1/3 of the variability in mp. 
+
+A three-predictor linear model including the weight, the qsec and the am achieves to explain aournd 85% of the variability in mpg, and weight appears to be the most important predictor. When accounting for the weight and for the qsec, the linear coefficient of am is 2.9+/-1.4, which means that moving from automatic to manual transmission increased the mpg with a value of 2.9 +/- 1.4.
+
+
+#  Exploratory data analyses
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE}
+rm(list=ls())
+suppressMessages(require(ggplot2))
+suppressMessages(require(knitr))
+suppressMessages(require(plyr))
+suppressMessages(require(dplyr))
+suppressMessages(require(GGally))
+suppressMessages(require(ISLR))
+suppressMessages(require(grid))
+suppressMessages(require(gridExtra))
+suppressMessages(require(corrplot))
+suppressMessages(require(car))
+suppressMessages(require(MASS))
+suppressMessages(require(glmnet))
+suppressMessages(require(leaps))
+suppressMessages(require(Hmisc))
+suppressMessages(require(Rmisc))
+suppressMessages(require(caret))
+suppressMessages(require(randomForest))
+suppressMessages(require(xgboost))
+```
+
+```{r include=FALSE}
+data(mtcars)
+#names(mtcars)
+summary(mtcars)
+#sapply(mtcars,class)
+```
+__Boxplots and violinplots__ of the mpg in function of the transmission type suggest that there may indeed be a significant association between the transmission type and the mpg. See the appendix for these plots.
+
+```{r include=FALSE}
+g1a=ggplot(mtcars,aes(x = factor(am),y=mpg))
+g1a=g1a + geom_boxplot(color="blue", fill="white")
+g1a=g1a+xlab("auto (0) or manual (1)")+ylab("miles per gallon")
+
+g1b=ggplot(mtcars,aes(x = factor(am),y=mpg))
+g1b=g1b + geom_violin(color="blue", fill="white", draw_quantiles = c(0.25, 0.5, 0.75),scale = "count")
+g1b=g1b+xlab("auto (0) or manual (1)")+ylab("miles per gallon")
+grid.arrange(g1a,g1b,nrow=1,top="test")
+```
+
+We make __subgroups__ of the data per transmission type and perform a __two-sided t-test for the null-hypothesis that the mean mpg is not different between the subgroups__. At a significance level of .05, we reject this null-hypothesis with a p-value of .1%, meaning there is a __significant association between the transmission type and the mpg__.
+```{r include=FALSE}
+auto=subset(mtcars,am==0)
+man=subset(mtcars,am==1)
+t_test=t.test(auto$mpg,man$mpg,data=mtcars)
+print(paste("The found p-value for the two sided t-test is:",round(t_test$p.value,3)))
+```
+
+# Model building
+
+## One-variable model: transmission type
+We create a linear regression with the transmission type as the predictor for the mpg. We find a __linear coefficient of 7.25 +/-1.8__, indicating that a change from automatic to manual transmission increases the number of miles per gallon with 7.25 +/-1.8. We find an __R^2 value and an adjusted R^2-value of only .36 and .34 respectively__, however, which means that __only roughly a third of the variability in mpg is explained by the transmission type__.
+```{r include=FALSE}
+modAM=lm(mpg~am, mtcars)
+print(paste("The found R^2-value for a linear model with the transmission type as the only predictor is:",round(summary(modAM)$r.square,3)))
+summary(modAM)$adj.r.square
+summary(mtcars$mpg)
+```
+
+We make a __correlation plot__ to see which other variables may affect the mpg as well. Besides the transmission type, __the weight and the number of cylinders, for instance, are candidate predictors__ as well. Note that we'll have to be careful, as __considerable collinearity__ between the independent variables exist.
+
+```{r include=FALSE}
+#mtcars$cyl=factor(mtcars$cyl)
+#mtcars$vs=factor(mtcars$vs)
+#mtcars$am=factor(mtcars$am,labels=c('Auto','Man'))
+#mtcars$gear=factor(mtcars$gear)
+#mtcars$carb=factor(mtcars$carb)
+```
+
+```{r include=FALSE}
+regfit.full=regsubsets(mpg~.,data=mtcars)
+reg.summary =summary(regfit.full)
+par(mfrow=c(2,2))
+plot(reg.summary$rss ,xlab="Number of Variables ",ylab="RSS", type="l")
+plot(reg.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+plot(reg.summary$cp ,xlab="Number of Variables ",ylab="Cp",type="l")
+plot(reg.summary$bic ,xlab="Number of Variables ",ylab="BIC", type="l")
+```
+
+## Best subset three-variables model: wt, qsec and am
+
+We make a __new linear model__ using __best subset analysis__ (function regsubsets) and take the number of variables with the __lowest BIC-value__. This yields __three variables__ to be included for the new model: __the weigth, the time in seconds for 1/4 mile and the transmission type__. The linear coefficients are -3.9+/-.7 (wt), 1.2+/-.3 (qsec) and 2.9 +/- 1.4 (am). When accounting for other significant variables, the __effect of the transmission type__ thus is __reduced__. The effect of the transmission type moreover has a __large standard error__. The __largest part of the variability (R^2=75%) of the variability in mpg is explained by the weight.__
+
+```{r include=FALSE}
+n_bic<-which.min(reg.summary$bic)
+n_cp<-which.min(reg.summary$cp)
+coef(regfit.full ,n_bic)
+modSel<-lm(mpg~wt+qsec+am,data=mtcars)
+vif(modSel)
+par(mfrow=c(2,2))
+plot(modSel)
+```
+
+
+```{r include=FALSE}
+sum.modSel=summary(modSel)
+sum.modSel$adj.r.squared
+sum.modSel$r.squared
+sum.modSel
+summary(lm(mpg~qsec,mtcars))$r.square
+summary(lm(mpg~am,mtcars))$r.square
+summary(lm(mpg~wt,mtcars))$r.square
+```
+
+
+```{r include=FALSE}
+plot(modSel, which=1)
+```
+
+
+```{r include=FALSE}
+modAll=lm(mpg~.,mtcars)
+modStepAIC=stepAIC(modAll)
+```
+
+The __R^2-value and the adjusted R^2 values for this model are .83 and .85__, respectively, which explains quite a bit of the variability for the mpg. When we plot the __residuals__, however, we do see a pattern in the residuals that are __indicating non-linearity or interaction terms__ in the data.
+
+```{r echo=FALSE}
+g=ggplot(mtcars,aes(x=modSel$fitted.values,y=modSel$residuals)) #, col=cyl
+g=g+geom_point()
+g=g+geom_point(shape = 1) + theme_bw()
+g=g+geom_smooth(method = "loess",size = .5, col="red") #, se=FALSE, 
+g=g+geom_hline(yintercept=0, linetype="dashed", color = "blue")
+g=g+xlab("Fitted mpg values")+ylab("Residuals for the predicted mpg values")
+g=g+ggtitle("Residuals plot for the linear model including wt, qsec and am")
+plot(g)
+```
+
+## Tuned model
+
+We __redo the best subset analysis__, but now __including interaction terms__ for the weight, the number of seconds for 1/4 mile and the transmission type. The lowest BIC is now reached  again for three variables: qsec, am and am/wt. The __R^2-value and the adjusted R^2 values for this model now reach .9 and .88__, respectively, which is better than all the previous models. The linear coefficients are: 2.68+/-1.3 (qsec), 14.0+/-3.4 (am) and -4.1+/-1.2 (am/wt). When we plot the __residuals__,we see that the pattern has disappeared. 
+
+qsec          2.6831     1.3002   2.064 0.049171 *  
+am           14.0026     3.3918   4.128 0.000334 ***
+wt            6.6931     7.4051   0.904 0.374379    
+am:wt        -4.1411     1.1815  -3.505 0.001675 ** 
+qsec:wt      -0.5401     0.4137  -1.306 0.203141 
+
+```{r include=FALSE}
+regfit.full2=regsubsets(mpg~(wt+qsec+am)^2,data=mtcars)
+reg.summary2=summary(regfit.full2)
+par(mfrow=c(2,2))
+plot(reg.summary2$rss ,xlab="Number of Variables ",ylab="RSS", type="l")
+plot(reg.summary2$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+plot(reg.summary2$cp ,xlab="Number of Variables ",ylab="Cp",type="l")
+plot(reg.summary2$bic ,xlab="Number of Variables ",ylab="BIC", type="l")
+
+n_bic<-which.min(reg.summary2$bic)
+n_cp<-which.min(reg.summary2$cp)
+n_bic
+coef(regfit.full2 ,3)
+
+
+modSel2<-lm(mpg~qsec+am+wt/am,data=mtcars)
+summary(modSel2)
+summary(lm(mpg~qsec,mtcars))$r.square
+summary(lm(mpg~am,mtcars))$r.square
+summary(lm(mpg~wt/am,mtcars))$r.square
+
+
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(modSel2)
+```
+\newpage
+
+# Appendix
+
+__Boxplots and violinplots__ of the mpg in function of the transmission type suggest that there may indeed be a significant association between the transmission type and the mpg. 
+
+```{r echo=FALSE}
+g1a=ggplot(mtcars,aes(x = factor(am),y=mpg))
+g1a=g1a + geom_boxplot(color="blue", fill="white")
+g1a=g1a+xlab("auto (0) or manual (1)")+ylab("miles per gallon")
+
+g1b=ggplot(mtcars,aes(x = factor(am),y=mpg))
+g1b=g1b + geom_violin(color="blue", fill="white", draw_quantiles = c(0.25, 0.5, 0.75),scale = "count")
+g1b=g1b+xlab("auto (0) or manual (1)")+ylab("miles per gallon")
+grid.arrange(g1a,g1b,nrow=1,top="test")
+```
+
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+correl=cor(mtcars)
+diag(correl)<-0
+selection=mtcars[,c(1,which(abs(correl[,"mpg"])>0.5))]
+suppressMessages(print(ggpairs(selection,lower = list(continuous=wrap("smooth",alpha=0.3,size=0.1)),title="Pairplots for the mtcars datasets.",mapping=ggplot2::aes(color=as.factor(mtcars$am)))))
+```
+
+Correlationplot to identify candidate predictors
+
+```{r echo=FALSE}
+corrplot.mixed(correl)
+```
+
+
+
+```{r include=FALSE}
+par(mfrow=c(2,2))
+plot(reg.summary$rss ,xlab="Number of Variables ",ylab="RSS", type="l")
+plot(reg.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+plot(reg.summary$cp ,xlab="Number of Variables ",ylab="Cp",type="l")
+plot(reg.summary$bic ,xlab="Number of Variables ",ylab="BIC", type="l")
+```
+
+Based on the best subset analysis, we include three variables in the model: wt, qsec and am. We create model plots for this model.
+
+```{r echo=FALSE}
+n_bic<-which.min(reg.summary$bic)
+n_cp<-which.min(reg.summary$cp)
+coef(regfit.full ,n_bic)
+modSel<-lm(mpg~wt+qsec+am,data=mtcars)
+par(mfrow=c(2,2))
+plot(modSel)
+```
+
+Summary plots for the tuned model that includes qsec, am and an interaction term wt/am 
+```{r}
+par(mfrow=c(2,2))
+plot(modSel2)
+```
+
+
+
+
